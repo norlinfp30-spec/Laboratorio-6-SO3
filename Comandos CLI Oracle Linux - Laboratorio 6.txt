@@ -1,0 +1,209 @@
+Practica 1 – Cifrado con GPG2
+1. Instalar GPG2
+sudo dnf install gnupg2 -y
+
+Verificar:
+
+gpg2 --version
+2. Crear directorio y archivo
+mkdir practica_cifrado
+cd practica_cifrado
+nano archivo.txt
+
+Escribir dentro:
+
+Este es un archivo secreto para la practica de cifrado
+
+Guardar con:
+
+CTRL + X
+Y
+ENTER
+3. Cifrar archivo
+gpg2 -c archivo.txt
+
+Te pedirá contraseña de cifrado.
+
+Se creará:
+
+archivo.txt.gpg
+4. Intentar leer archivo cifrado
+cat archivo.txt.gpg
+
+Verás símbolos raros porque está cifrado.
+
+5. Descifrar archivo
+gpg2 archivo.txt.gpg
+
+Ingresas la contraseña.
+
+6. Mostrar contenido
+cat archivo.txt
+Practica 2 – IPTables + Firewall
+
+En Oracle Linux 9 el firewall principal es firewalld, pero también puedes usar iptables.
+
+1 Instalar servicios
+HTTP
+sudo dnf install httpd -y
+sudo systemctl start httpd
+sudo systemctl enable httpd
+FTP
+sudo dnf install vsftpd -y
+sudo systemctl start vsftpd
+sudo systemctl enable vsftpd
+SSH (ya viene instalado)
+
+Verificar:
+
+systemctl status sshd
+Ver puertos abiertos
+ss -tuln
+
+Debes ver:
+
+80
+21
+22
+Bloquear puertos con IPTables
+
+Bloquear HTTP
+
+sudo iptables -A INPUT -p tcp --dport 80 -j DROP
+
+Bloquear FTP
+
+sudo iptables -A INPUT -p tcp --dport 21 -j DROP
+
+Bloquear SSH
+
+sudo iptables -A INPUT -p tcp --dport 22 -j DROP
+
+Ver reglas
+
+sudo iptables -L
+Habilitar nuevamente con IPTables
+
+Eliminar reglas
+
+sudo iptables -D INPUT -p tcp --dport 80 -j DROP
+sudo iptables -D INPUT -p tcp --dport 21 -j DROP
+sudo iptables -D INPUT -p tcp --dport 22 -j DROP
+Bloquear con Firewall-cmd
+
+Bloquear servicios
+
+sudo firewall-cmd --permanent --remove-service=http
+sudo firewall-cmd --permanent --remove-service=ftp
+sudo firewall-cmd --permanent --remove-service=ssh
+
+Aplicar cambios
+
+sudo firewall-cmd --reload
+Habilitar nuevamente
+sudo firewall-cmd --permanent --add-service=http
+sudo firewall-cmd --permanent --add-service=ftp
+sudo firewall-cmd --permanent --add-service=ssh
+
+Reload
+
+sudo firewall-cmd --reload
+Practica 3 – IDS Snort
+
+Instalar repositorio extra:
+
+sudo dnf install epel-release -y
+
+Instalar Snort
+
+sudo dnf install snort -y
+
+Verificar:
+
+snort -V
+Editar reglas
+sudo nano /etc/snort/rules/local.rules
+
+Agregar reglas:
+
+Detectar Ping
+alert icmp any any -> any any (msg:"Ping detectado"; sid:1000001; rev:1;)
+Detectar FTP
+alert tcp any any -> any 21 (msg:"Acceso FTP detectado"; sid:1000002; rev:1;)
+Detectar SSH
+alert tcp any any -> any 22 (msg:"Acceso SSH detectado"; sid:1000003; rev:1;)
+Detectar HTTP
+alert tcp any any -> any 80 (msg:"Acceso HTTP detectado"; sid:1000004; rev:1;)
+Ejecutar Snort
+
+Primero ver tu interfaz:
+
+ip a
+
+Ejemplo interfaz:
+
+enp0s3
+
+Ejecutar IDS:
+
+sudo snort -A console -q -c /etc/snort/snort.conf -i enp0s3
+Probar desde tu máquina host
+
+Ping
+
+ping IP_VM
+
+SSH
+
+ssh usuario@IP_VM
+
+HTTP
+
+Abrir navegador
+
+http://IP_VM
+
+Snort mostrará alertas.
+
+Practica 4 – 2FA SSH
+
+Instalar Google Authenticator
+
+sudo dnf install google-authenticator -y
+Configurar usuario
+google-authenticator
+
+Responder Y a todo.
+
+Escanear el QR en tu celular con Google Authenticator.
+
+Configurar PAM
+sudo nano /etc/pam.d/sshd
+
+Agregar:
+
+auth required pam_google_authenticator.so
+Configurar SSH
+sudo nano /etc/ssh/sshd_config
+
+Cambiar:
+
+ChallengeResponseAuthentication yes
+
+Verificar:
+
+UsePAM yes
+Reiniciar SSH
+sudo systemctl restart sshd
+Probar acceso
+
+Desde tu host:
+
+ssh usuario@IP_VM
+
+Te pedirá:
+
+Password
+Verification Code
+
+Ingresas el código de Google Authenticator.
