@@ -39,6 +39,7 @@ Ingresas la contraseña.
 
 6. Mostrar contenido
 cat archivo.txt
+
 Practica 2 – IPTables + Firewall
 
 En Oracle Linux 9 el firewall principal es firewalld, pero también puedes usar iptables.
@@ -108,102 +109,216 @@ sudo firewall-cmd --permanent --add-service=ssh
 Reload
 
 sudo firewall-cmd --reload
-Practica 3 – IDS Snort
 
-Instalar repositorio extra:
+# Práctica 3 — Instalación y Configuración de IDS Snort 3
+# Oracle Linux 9.7 | Hyper-V | eth0 | 192.168.0.199
+# =====================================================
 
-sudo dnf install epel-release -y
+# ─────────────────────────────────────────
+# 1. PREPARACIÓN INICIAL
+# ─────────────────────────────────────────
 
-Instalar Snort
+# Cambiar a usuario root
+sudo su
 
-sudo dnf install snort -y
+# Actualizar el sistema
+dnf update -y
 
-Verificar:
+# ─────────────────────────────────────────
+# 2. HABILITAR REPOSITORIO CODEREADY BUILDER
+# ─────────────────────────────────────────
 
-snort -V
-Editar reglas
-sudo nano /etc/snort/rules/local.rules
+# Habilitar repo necesario para paquetes -devel
+dnf config-manager --set-enabled ol9_codeready_builder
 
-Agregar reglas:
+# ─────────────────────────────────────────
+# 3. CONFIGURAR PATH Y LIBRERÍA LOCAL
+# ─────────────────────────────────────────
 
-Detectar Ping
-alert icmp any any -> any any (msg:"Ping detectado"; sid:1000001; rev:1;)
-Detectar FTP
-alert tcp any any -> any 21 (msg:"Acceso FTP detectado"; sid:1000002; rev:1;)
-Detectar SSH
-alert tcp any any -> any 22 (msg:"Acceso SSH detectado"; sid:1000003; rev:1;)
-Detectar HTTP
-alert tcp any any -> any 80 (msg:"Acceso HTTP detectado"; sid:1000004; rev:1;)
-Ejecutar Snort
+# Agregar /usr/local/lib al path de bibliotecas del sistema
+echo '/usr/local/lib' > /etc/ld.so.conf.d/local.conf
+ldconfig
 
-Primero ver tu interfaz:
+# Agregar /usr/local/bin al PATH para encontrar snort
+echo 'export PATH=$PATH:/usr/local/bin' >> /etc/profile
+source /etc/profile
 
-ip a
+# ─────────────────────────────────────────
+# 4. INSTALAR DEPENDENCIAS
+# ─────────────────────────────────────────
 
-Ejemplo interfaz:
+# Instalar EPEL
+dnf install -y epel-release
 
-enp0s3
+# Instalar todas las dependencias necesarias para compilar Snort 3
+dnf install -y gcc gcc-c++ make cmake autoconf automake \
+  libtool flex bison git wget curl unzip \
+  libpcap-devel pcre-devel pcre2-devel libdnet-devel \
+  openssl-devel zlib-devel hwloc-devel \
+  luajit-devel libuuid-devel pkg-config xz-devel xz
 
-Ejecutar IDS:
+# ─────────────────────────────────────────
+# 5. INSTALAR LIBDAQ
+# ─────────────────────────────────────────
 
-sudo snort -A console -q -c /etc/snort/snort.conf -i enp0s3
-Probar desde tu máquina host
+# Clonar el repositorio de libdaq
+cd /tmp
+git clone https://github.com/snort3/libdaq.git
+cd libdaq
 
-Ping
+# Compilar e instalar libdaq
+./bootstrap
+./configure
+make
+make install
+ldconfig
 
-ping IP_VM
+# Verificar que libdaq quedó registrado correctamente
+ldconfig -p | grep libdaq
 
-SSH
+# ─────────────────────────────────────────
+# 6. COMPILAR E INSTALAR SNORT 3
+# ─────────────────────────────────────────
 
-ssh usuario@IP_VM
+# Descargar Snort 3 desde GitHub
+cd /tmp
+wget https://github.com/snort3/snort3/archive/refs/heads/master.zip -O snort3.zip
+unzip snort3.zip
+cd snort3-master
 
-HTTP
+# Configurar la compilación
+./configure_cmake.sh --prefix=/usr/local
 
-Abrir navegador
+# Compilar usando todos los núcleos disponibles
+cd build
+make -j$(nproc)
 
-http://IP_VM
+# Instalar Snort
+make install
+ldconfig
 
-Snort mostrará alertas.
+# ─────────────────────────────────────────
+# 7. VERIFICAR INSTALACIÓN
+# ─────────────────────────────────────────
 
-Practica 4 – 2FA SSH
+# Comprobar versión instalada de Snort
+snort --version
 
-Instalar Google Authenticator
+# ─────────────────────────────────────────
+# 8. CREAR ESTRUCTURA DE DIRECTORIOS
+# ─────────────────────────────────────────
 
-sudo dnf install google-authenticator -y
-Configurar usuario
-google-authenticator
+# Crear directorios para configuración y logs
+mkdir -p /etc/snort/rules
+mkdir -p /var/log/snort
+chmod -R 755 /etc/snort
+chmod -R 755 /var/log/snort
 
-Responder Y a todo.
+# ─────────────────────────────────────────
+# 9. CREAR ARCHIVO DE CONFIGURACIÓN snort.lua
+# ─────────────────────────────────────────
 
-Escanear el QR en tu celular con Google Authenticator.
+# Crear el archivo de configuración principal
+cat > /etc/snort/snort.lua << 'EOF'
+daq =
+{
+    module_dirs = { '/usr/local/lib/daq' }
+}
 
-Configurar PAM
-sudo nano /etc/pam.d/sshd
+ips =
+{
+    variables =
+    {
+        nets =
+        {
+            HOME_NET = '192.168.0.0/24',
+            EXTERNAL_NET = '!$HOME_NET'
+        }
+    },
+    include = '/etc/snort/rules/local.rules'
+}
 
-Agregar:
+alert_fast = { }
+EOF
 
-auth required pam_google_authenticator.so
-Configurar SSH
-sudo nano /etc/ssh/sshd_config
+# ─────────────────────────────────────────
+# 10. CREAR REGLAS DE DETECCIÓN local.rules
+# ─────────────────────────────────────────
 
-Cambiar:
+# Crear el archivo de reglas personalizadas
+cat > /etc/snort/rules/local.rules << 'EOF'
+# Regla 1: Detectar ICMP (Ping) hacia el host
+alert icmp any any -> $HOME_NET any (msg:"ICMP Ping detectado hacia el host"; itype:8; sid:1000001; rev:1;)
 
-ChallengeResponseAuthentication yes
+# Regla 2: Detectar trafico FTP (Puerto 21/TCP)
+alert tcp any any -> $HOME_NET 21 (msg:"Conexion FTP detectada - Puerto 21/TCP"; flags:S; sid:1000002; rev:1;)
 
-Verificar:
+# Regla 3: Detectar trafico SSH (Puerto 22/TCP)
+alert tcp any any -> $HOME_NET 22 (msg:"Conexion SSH detectada - Puerto 22/TCP"; flags:S; sid:1000003; rev:1;)
 
-UsePAM yes
-Reiniciar SSH
-sudo systemctl restart sshd
-Probar acceso
+# Regla 4: Detectar trafico HTTP (Puerto 80/TCP)
+alert tcp any any -> $HOME_NET 80 (msg:"Conexion HTTP detectada - Puerto 80/TCP"; flags:S; sid:1000004; rev:1;)
+EOF
 
-Desde tu host:
+# ─────────────────────────────────────────
+# 11. VALIDAR CONFIGURACIÓN Y REGLAS
+# ─────────────────────────────────────────
 
-ssh usuario@IP_VM
+# Verificar que la configuración y reglas son correctas
+snort -c /etc/snort/snort.lua -T
 
-Te pedirá:
+# Salida esperada:
+# Snort successfully validated the configuration (with 0 warnings).
 
-Password
-Verification Code
+# ─────────────────────────────────────────
+# 12. EJECUTAR SNORT EN MODO IDS
+# ─────────────────────────────────────────
 
-Ingresas el código de Google Authenticator.
+# Iniciar Snort escuchando en la interfaz eth0
+snort -c /etc/snort/snort.lua -i eth0 -A alert_fast -l /var/log/snort
+
+# ─────────────────────────────────────────
+# 13. MONITOREAR ALERTAS EN TIEMPO REAL
+# ─────────────────────────────────────────
+
+# Ver alertas generadas en tiempo real (segunda terminal)
+tail -f /var/log/snort/alert_fast.txt
+
+# ─────────────────────────────────────────
+# 14. PRUEBAS DESDE LA MÁQUINA HOST
+# ─────────────────────────────────────────
+
+# Prueba 1 — ICMP (desde Windows CMD o Linux)
+# ping 192.168.0.199
+
+# Prueba 2 — FTP Puerto 21
+# ftp 192.168.0.199
+
+# Prueba 3 — SSH Puerto 22
+# ssh usuario@192.168.0.199
+
+# Prueba 4 — HTTP Puerto 80
+# curl http://192.168.0.199
+
+# ─────────────────────────────────────────
+# 15. COMANDOS ÚTILES
+# ─────────────────────────────────────────
+
+# Detener Snort
+pkill snort
+
+# Ver todas las alertas registradas
+cat /var/log/snort/alert_fast.txt
+
+# Filtrar alertas por tipo
+grep 'ICMP' /var/log/snort/alert_fast.txt
+grep 'SSH'  /var/log/snort/alert_fast.txt
+grep 'FTP'  /var/log/snort/alert_fast.txt
+grep 'HTTP' /var/log/snort/alert_fast.txt
+
+# Limpiar archivo de alertas
+truncate -s 0 /var/log/snort/alert_fast.txt
+
+# Validar sintaxis sin ejecutar
+snort -c /etc/snort/snort.lua -T
+
