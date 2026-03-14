@@ -322,3 +322,115 @@ truncate -s 0 /var/log/snort/alert_fast.txt
 # Validar sintaxis sin ejecutar
 snort -c /etc/snort/snort.lua -T
 
+Práctica 4 
+
+1️⃣ Instalar Google Authenticator
+sudo dnf install epel-release -y
+sudo dnf install google-authenticator qrencode -y
+2️⃣ Sincronizar el tiempo (MUY IMPORTANTE para TOTP)
+sudo timedatectl set-timezone America/Santo_Domingo
+sudo timedatectl set-ntp true
+sudo systemctl restart chronyd
+timedatectl
+
+Debe mostrar:
+
+System clock synchronized: yes
+NTP service: active
+3️⃣ Configurar Google Authenticator para el usuario
+
+Cambiar al usuario que usará SSH:
+
+su - nolberto
+
+Ejecutar:
+
+google-authenticator
+
+Respuestas:
+
+Do you want authentication tokens to be time-based? → y
+Do you want me to update your file? → y
+Do you want to disallow multiple uses? → y
+Increase the original generation time limit? → n
+Enable rate-limiting? → y
+
+📱 Escanear el QR con Google Authenticator.
+
+Salir del usuario:
+
+exit
+4️⃣ Corregir permisos (esto evita el error que tuviste)
+sudo chown nolberto:nolberto /home/nolberto/.google_authenticator
+sudo chmod 600 /home/nolberto/.google_authenticator
+sudo chmod 700 /home/nolberto
+5️⃣ Arreglar contexto SELinux (MUY importante en Oracle Linux)
+sudo restorecon -Rv /home/nolberto
+
+Verificar:
+
+ls -lZ /home/nolberto/.google_authenticator
+
+Debe decir algo como:
+
+user_home_t
+6️⃣ Configurar PAM para usar Google Authenticator
+
+Editar:
+
+sudo nano /etc/pam.d/sshd
+
+Dejar las primeras líneas exactamente así:
+
+#%PAM-1.0
+auth       substack     password-auth
+auth       required     pam_google_authenticator.so nullok
+auth       include      postlogin
+
+Guardar.
+
+7️⃣ Configurar SSH para permitir 2FA
+
+Editar:
+
+sudo nano /etc/ssh/sshd_config
+
+Asegurar estas líneas:
+
+UsePAM yes
+PasswordAuthentication yes
+KbdInteractiveAuthentication yes
+ChallengeResponseAuthentication yes
+PubkeyAuthentication no
+
+Guardar.
+
+8️⃣ Reiniciar SSH
+sudo systemctl restart sshd
+
+Verificar:
+
+sudo systemctl status sshd
+
+Debe decir:
+
+active (running)
+9️⃣ Probar acceso desde la máquina host
+
+Desde tu PC:
+
+ssh nolberto@192.168.0.199
+
+Debe pedir:
+
+Verification code:
+Password:
+
+Ingresar:
+
+1️⃣ código de Google Authenticator
+2️⃣ contraseña del usuario
+
+Si todo está correcto entrarás:
+
+[nolberto@m20252263 ~]$
