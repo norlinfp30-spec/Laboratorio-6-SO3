@@ -176,6 +176,7 @@ sudo mv /tmp/snort.lua /etc/snort/snort.lua
 cat > /tmp/local.rules << 'EOF'
 alert icmp any any -> $HOME_NET any (msg:"ICMP Ping detectado"; itype:8; sid:1000001; rev:1;)
 alert tcp any any -> $HOME_NET 22 (msg:"Conexion SSH detectada"; flags:S; sid:1000003; rev:1;)
+alert tcp any any -> $HOME_NET 80 (msg:"Trafico HTTP detectado"; sid:1000003; rev:1;)
 EOF
 sudo mv /tmp/local.rules /etc/snort/rules/local.rules
 
@@ -297,3 +298,19 @@ Ingresar:
 Si todo está correcto entrarás:
 
 [nolberto@m20252263 ~]$
+
+
+-----------------------------------------------------------------------------------------------------------------------------
+# Bloquear ICMP (Ping)
+sudo firewall-cmd --permanent --add-rich-rule='rule protocol value="icmp" drop'
+
+# Bloquear Puerto 22 (SSH)
+sudo firewall-cmd --permanent --remove-service=ssh
+sudo firewall-cmd --permanent --add-port=22/tcp --reject
+
+# Bloquear Puerto 80 (HTTP)
+sudo firewall-cmd --permanent --add-port=80/tcp --reject
+
+# Recargar para aplicar
+sudo firewall-cmd --reload
+sudo /usr/local/bin/snort -c /etc/snort/snort.lua -i eth0 -A alert_fast
