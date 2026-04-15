@@ -111,216 +111,79 @@ Reload
 sudo firewall-cmd --reload
 
 # Práctica 3 — Instalación y Configuración de IDS Snort 3
-# Oracle Linux 9.7 | Hyper-V | eth0 | 192.168.0.199
-# =====================================================
+# ─────────────────────────────────────────
+# 1. REPOSITORIOS Y HERRAMIENTAS BASE
+# ─────────────────────────────────────────
+sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
+sudo dnf config-manager --set-enabled ol9_codeready_builder
+
+sudo dnf install -y gcc gcc-c++ cmake git wget unzip \
+autoconf automake libtool flex bison \
+libpcap-devel pcre2-devel libdnet-devel hwloc-devel \
+openssl-devel zlib-devel pkgconfig xz-devel \
+libuuid-devel libnghttp2-devel luajit-devel
 
 # ─────────────────────────────────────────
-# 1. PREPARACIÓN INICIAL
+# 2. COMPILAR E INSTALAR LIBDAQ
 # ─────────────────────────────────────────
-
-# Cambiar a usuario root
-sudo su
-
-# Actualizar el sistema
-dnf update -y
-
-# ─────────────────────────────────────────
-# 2. HABILITAR REPOSITORIO CODEREADY BUILDER
-# ─────────────────────────────────────────
-
-# Habilitar repo necesario para paquetes -devel
-dnf config-manager --set-enabled ol9_codeready_builder
-
-# ─────────────────────────────────────────
-# 3. CONFIGURAR PATH Y LIBRERÍA LOCAL
-# ─────────────────────────────────────────
-
-# Agregar /usr/local/lib al path de bibliotecas del sistema
-echo '/usr/local/lib' > /etc/ld.so.conf.d/local.conf
-ldconfig
-
-# Agregar /usr/local/bin al PATH para encontrar snort
-echo 'export PATH=$PATH:/usr/local/bin' >> /etc/profile
-source /etc/profile
-
-# ─────────────────────────────────────────
-# 4. INSTALAR DEPENDENCIAS
-# ─────────────────────────────────────────
-
-# Instalar EPEL
-dnf install -y epel-release
-
-# Instalar todas las dependencias necesarias para compilar Snort 3
-dnf install -y gcc gcc-c++ make cmake autoconf automake \
-  libtool flex bison git wget curl unzip \
-  libpcap-devel pcre-devel pcre2-devel libdnet-devel \
-  openssl-devel zlib-devel hwloc-devel \
-  luajit-devel libuuid-devel pkg-config xz-devel xz
-
-# ─────────────────────────────────────────
-# 5. INSTALAR LIBDAQ
-# ─────────────────────────────────────────
-
-# Clonar el repositorio de libdaq
 cd /tmp
+rm -rf libdaq
 git clone https://github.com/snort3/libdaq.git
 cd libdaq
-
-# Compilar e instalar libdaq
 ./bootstrap
 ./configure
-make
-make install
-ldconfig
+make -j$(nproc)
+sudo make install
 
-# Verificar que libdaq quedó registrado correctamente
-ldconfig -p | grep libdaq
+# PASO CRÍTICO: Registrar las librerías en el sistema
+echo "/usr/local/lib" | sudo tee /etc/ld.so.conf.d/local.conf
+sudo ldconfig
 
 # ─────────────────────────────────────────
-# 6. COMPILAR E INSTALAR SNORT 3
+# 3. COMPILAR E INSTALAR SNORT 3
 # ─────────────────────────────────────────
-
-# Descargar Snort 3 desde GitHub
 cd /tmp
 wget https://github.com/snort3/snort3/archive/refs/heads/master.zip -O snort3.zip
-unzip snort3.zip
+unzip -o snort3.zip
 cd snort3-master
-
-# Configurar la compilación
+rm -rf build/
 ./configure_cmake.sh --prefix=/usr/local
-
-# Compilar usando todos los núcleos disponibles
 cd build
 make -j$(nproc)
-
-# Instalar Snort
-make install
-ldconfig
+sudo make install
+sudo ldconfig
 
 # ─────────────────────────────────────────
-# 7. VERIFICAR INSTALACIÓN
+# 4. CONFIGURACIÓN DEL IDS (Rules & Lua)
 # ─────────────────────────────────────────
+sudo mkdir -p /etc/snort/rules /var/log/snort
+sudo chmod -R 777 /var/log/snort
 
-# Comprobar versión instalada de Snort
-snort --version
-
-# ─────────────────────────────────────────
-# 8. CREAR ESTRUCTURA DE DIRECTORIOS
-# ─────────────────────────────────────────
-
-# Crear directorios para configuración y logs
-mkdir -p /etc/snort/rules
-mkdir -p /var/log/snort
-chmod -R 755 /etc/snort
-chmod -R 755 /var/log/snort
-
-# ─────────────────────────────────────────
-# 9. CREAR ARCHIVO DE CONFIGURACIÓN snort.lua
-# ─────────────────────────────────────────
-
-# Crear el archivo de configuración principal
-cat > /etc/snort/snort.lua << 'EOF'
-daq =
-{
-    module_dirs = { '/usr/local/lib/daq' }
-}
-
-ips =
-{
-    variables =
-    {
-        nets =
-        {
-            HOME_NET = '192.168.0.0/24',
-            EXTERNAL_NET = '!$HOME_NET'
-        }
+# Crear archivo de configuración
+cat > /tmp/snort.lua << 'EOF'
+daq = { module_dirs = { '/usr/local/lib/daq' } }
+ips = {
+    variables = {
+        nets = { HOME_NET = '192.168.0.0/24', EXTERNAL_NET = '!$HOME_NET' }
     },
     include = '/etc/snort/rules/local.rules'
 }
-
 alert_fast = { }
 EOF
+sudo mv /tmp/snort.lua /etc/snort/snort.lua
 
-# ─────────────────────────────────────────
-# 10. CREAR REGLAS DE DETECCIÓN local.rules
-# ─────────────────────────────────────────
-
-# Crear el archivo de reglas personalizadas
-cat > /etc/snort/rules/local.rules << 'EOF'
-# Regla 1: Detectar ICMP (Ping) hacia el host
-alert icmp any any -> $HOME_NET any (msg:"ICMP Ping detectado hacia el host"; itype:8; sid:1000001; rev:1;)
-
-# Regla 2: Detectar trafico FTP (Puerto 21/TCP)
-alert tcp any any -> $HOME_NET 21 (msg:"Conexion FTP detectada - Puerto 21/TCP"; flags:S; sid:1000002; rev:1;)
-
-# Regla 3: Detectar trafico SSH (Puerto 22/TCP)
-alert tcp any any -> $HOME_NET 22 (msg:"Conexion SSH detectada - Puerto 22/TCP"; flags:S; sid:1000003; rev:1;)
-
-# Regla 4: Detectar trafico HTTP (Puerto 80/TCP)
-alert tcp any any -> $HOME_NET 80 (msg:"Conexion HTTP detectada - Puerto 80/TCP"; flags:S; sid:1000004; rev:1;)
+# Crear reglas de prueba (ICMP y SSH)
+cat > /tmp/local.rules << 'EOF'
+alert icmp any any -> $HOME_NET any (msg:"ICMP Ping detectado"; itype:8; sid:1000001; rev:1;)
+alert tcp any any -> $HOME_NET 22 (msg:"Conexion SSH detectada"; flags:S; sid:1000003; rev:1;)
 EOF
+sudo mv /tmp/local.rules /etc/snort/rules/local.rules
 
 # ─────────────────────────────────────────
-# 11. VALIDAR CONFIGURACIÓN Y REGLAS
+# 5. VALIDACIÓN FINAL
 # ─────────────────────────────────────────
-
-# Verificar que la configuración y reglas son correctas
-snort -c /etc/snort/snort.lua -T
-
-# Salida esperada:
-# Snort successfully validated the configuration (with 0 warnings).
-
-# ─────────────────────────────────────────
-# 12. EJECUTAR SNORT EN MODO IDS
-# ─────────────────────────────────────────
-
-# Iniciar Snort escuchando en la interfaz eth0
-snort -c /etc/snort/snort.lua -i eth0 -A alert_fast -l /var/log/snort
-
-# ─────────────────────────────────────────
-# 13. MONITOREAR ALERTAS EN TIEMPO REAL
-# ─────────────────────────────────────────
-
-# Ver alertas generadas en tiempo real (segunda terminal)
-tail -f /var/log/snort/alert_fast.txt
-
-# ─────────────────────────────────────────
-# 14. PRUEBAS DESDE LA MÁQUINA HOST
-# ─────────────────────────────────────────
-
-# Prueba 1 — ICMP (desde Windows CMD o Linux)
-# ping 192.168.0.199
-
-# Prueba 2 — FTP Puerto 21
-# ftp 192.168.0.199
-
-# Prueba 3 — SSH Puerto 22
-# ssh usuario@192.168.0.199
-
-# Prueba 4 — HTTP Puerto 80
-# curl http://192.168.0.199
-
-# ─────────────────────────────────────────
-# 15. COMANDOS ÚTILES
-# ─────────────────────────────────────────
-
-# Detener Snort
-pkill snort
-
-# Ver todas las alertas registradas
-cat /var/log/snort/alert_fast.txt
-
-# Filtrar alertas por tipo
-grep 'ICMP' /var/log/snort/alert_fast.txt
-grep 'SSH'  /var/log/snort/alert_fast.txt
-grep 'FTP'  /var/log/snort/alert_fast.txt
-grep 'HTTP' /var/log/snort/alert_fast.txt
-
-# Limpiar archivo de alertas
-truncate -s 0 /var/log/snort/alert_fast.txt
-
-# Validar sintaxis sin ejecutar
-snort -c /etc/snort/snort.lua -T
+/usr/local/bin/snort -c /etc/snort/snort.lua -T
+sudo /usr/local/bin/snort -c /etc/snort/snort.lua -i eth0 -A alert_fast -l /var/log/snort
 
 Práctica 4 
 
